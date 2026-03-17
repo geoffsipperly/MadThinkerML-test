@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Models (large binary files)
+models/*.pt
+models/*.mlpackage
+models/*.mlmodel
+models/*.pkl
+
+# Data (user provides locally)
+data/ground_truth/images/
+data/ground_truth/labels.csv
+
+# Output artifacts
+output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
