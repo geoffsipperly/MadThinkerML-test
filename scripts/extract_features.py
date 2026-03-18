@@ -258,6 +258,12 @@ def main():
     for _, row in labels_df.iterrows():
         filename = row["filename"]
         length_inches = row["length_inches"]
+
+        if pd.isna(filename) or str(filename).strip() == "":
+            skipped += 1
+            continue
+
+        filename = str(filename).strip()
         image_path = IMAGES_DIR / filename
 
         if not image_path.exists():

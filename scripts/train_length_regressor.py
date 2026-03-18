@@ -43,29 +43,48 @@ FEATURES_CSV = PROJECT_ROOT / "output" / "features.csv"
 MODELS_DIR = PROJECT_ROOT / "models"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
-# The 14 features used by the model
-FEATURE_COLS = [
+# Curated feature set — 10 ratio-based features that outperform the full 14
+# (validated via experiment_features.py: 2.19" MAE vs 2.33" with original 14)
+BASE_FEATURE_COLS = [
     "fish_box_width",
     "fish_box_height",
     "fish_box_area",
     "fish_aspect_ratio",
-    "fish_box_x_center",
-    "fish_box_y_center",
     "fish_confidence",
-    "person_detected",
     "person_box_height",
     "fish_to_person_ratio",
     "species_index",
     "species_confidence",
-    "image_aspect_ratio",
     "diagonal_fraction",
 ]
+
+# Engineered features computed from base features at training time
+ENGINEERED_FEATURES = [
+    "fish_pixel_length",
+    "pixel_length_to_person",
+    "fish_w_to_person_h",
+    "fish_h_to_person_h",
+    "fish_area_to_person_h_sq",
+]
+
+FEATURE_COLS = BASE_FEATURE_COLS + ENGINEERED_FEATURES
 
 TARGET_COL = "length_inches"
 BASELINE_COL = "baseline_prediction"
 
 N_FOLDS = 5
 RANDOM_STATE = 42
+
+
+def add_engineered_features(df):
+    """Compute derived features from base extracted features."""
+    df = df.copy()
+    df["fish_pixel_length"] = df[["fish_box_width", "fish_box_height"]].max(axis=1)
+    df["pixel_length_to_person"] = df["fish_pixel_length"] / df["person_box_height"].clip(lower=1)
+    df["fish_w_to_person_h"] = df["fish_box_width"] / df["person_box_height"].clip(lower=1)
+    df["fish_h_to_person_h"] = df["fish_box_height"] / df["person_box_height"].clip(lower=1)
+    df["fish_area_to_person_h_sq"] = df["fish_box_area"] / (df["person_box_height"].clip(lower=1) ** 2)
+    return df
 
 
 def train_and_evaluate(df):
@@ -87,22 +106,22 @@ def train_and_evaluate(df):
 
         if USE_XGBOOST:
             model = xgb.XGBRegressor(
-                n_estimators=200,
-                max_depth=4,
-                learning_rate=0.05,
+                n_estimators=300,
+                max_depth=2,
+                learning_rate=0.03,
                 subsample=0.8,
-                colsample_bytree=0.8,
+                colsample_bytree=0.7,
                 min_child_weight=3,
-                reg_alpha=0.1,
-                reg_lambda=1.0,
+                reg_alpha=0.5,
+                reg_lambda=2.0,
                 random_state=RANDOM_STATE,
             )
             model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
         else:
             model = GradientBoostingRegressor(
-                n_estimators=200,
-                max_depth=4,
-                learning_rate=0.05,
+                n_estimators=300,
+                max_depth=2,
+                learning_rate=0.03,
                 subsample=0.8,
                 min_samples_leaf=3,
                 random_state=RANDOM_STATE,
@@ -240,6 +259,9 @@ def main():
 
     if len(df) < 10:
         sys.exit(f"Too few samples ({len(df)}). Need at least 10 for cross-validation.")
+
+    # Add engineered features
+    df = add_engineered_features(df)
 
     # Train
     print(f"Training with {N_FOLDS}-fold cross-validation...")
