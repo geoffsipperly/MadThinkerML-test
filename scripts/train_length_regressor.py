@@ -52,10 +52,19 @@ BASE_FEATURE_COLS = [
     "fish_aspect_ratio",
     "fish_confidence",
     "person_box_height",
+    "person_box_width",
+    "person_aspect_ratio",
     "fish_to_person_ratio",
     "species_index",
     "species_confidence",
     "diagonal_fraction",
+    "hand_detected",
+    "finger_width_px",
+    "finger_length_px",
+    "ppi_from_finger",
+    "fish_to_finger_width",
+    "fish_to_finger_length",
+    "fish_inches_from_finger",
 ]
 
 # Engineered features computed from base features at training time
@@ -65,6 +74,8 @@ ENGINEERED_FEATURES = [
     "fish_w_to_person_h",
     "fish_h_to_person_h",
     "fish_area_to_person_h_sq",
+    "fish_w_to_person_w",
+    "fish_area_to_person_w_sq",
 ]
 
 FEATURE_COLS = BASE_FEATURE_COLS + ENGINEERED_FEATURES
@@ -84,6 +95,8 @@ def add_engineered_features(df):
     df["fish_w_to_person_h"] = df["fish_box_width"] / df["person_box_height"].clip(lower=1)
     df["fish_h_to_person_h"] = df["fish_box_height"] / df["person_box_height"].clip(lower=1)
     df["fish_area_to_person_h_sq"] = df["fish_box_area"] / (df["person_box_height"].clip(lower=1) ** 2)
+    df["fish_w_to_person_w"] = df["fish_box_width"] / df["person_box_width"].clip(lower=1)
+    df["fish_area_to_person_w_sq"] = df["fish_box_area"] / (df["person_box_width"].clip(lower=1) ** 2)
     return df
 
 

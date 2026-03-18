@@ -17,10 +17,13 @@ models/*.pt
 models/*.mlpackage
 models/*.mlmodel
 models/*.pkl
+# Keep hand_landmarker.task (7.5MB, needed for pipeline)
+!models/hand_landmarker.task
 
 # Data (user provides locally)
 data/ground_truth/images/
 data/ground_truth/labels.csv
+data/unlabeled/images/
 
 # Output artifacts
 output/

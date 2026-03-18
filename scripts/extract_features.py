@@ -22,6 +22,8 @@ import numpy as np
 import pandas as pd
 import torch
 import timm
+import mediapipe as mp
+from mediapipe.tasks.python import vision, BaseOptions
 from PIL import Image
 from torchvision import transforms
 from ultralytics import YOLO
@@ -36,6 +38,7 @@ OUTPUT_DIR = PROJECT_ROOT / "output"
 
 YOLO_MODEL_PATH = EPICWATERS_ML / "runs" / "fish_det" / "steelhead_fish_v3" / "weights" / "best.pt"
 VIT_MODEL_PATH = EPICWATERS_ML / "vit_fish_species_tiny_best.pt"
+HAND_MODEL_PATH = PROJECT_ROOT / "models" / "hand_landmarker.task"
 
 # ── Constants (matching Swift CatchPhotoAnalyzer) ────────────────────────────
 IMG_SIZE = 640.0
@@ -83,6 +86,103 @@ def load_vit_model():
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
     ])
     return model, tfms, device
+
+
+def load_hand_detector():
+    print(f"Loading MediaPipe hand landmarker from {HAND_MODEL_PATH}")
+    if not HAND_MODEL_PATH.exists():
+        sys.exit(f"Hand landmarker model not found: {HAND_MODEL_PATH}")
+    options = vision.HandLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=str(HAND_MODEL_PATH)),
+        num_hands=2,
+        min_hand_detection_confidence=0.3,
+        min_hand_presence_confidence=0.3,
+    )
+    return vision.HandLandmarker.create_from_options(options)
+
+
+def run_hand_detection(hand_detector, image_path):
+    """Detect hands and compute finger measurements in original image pixel space.
+
+    Uses index-to-middle finger knuckle spacing as the primary width reference
+    (~0.85" real-world for adults) and index finger MCP-to-TIP as the length
+    reference (~3.5" real-world).
+
+    Applies sanity filters to reject bad detections:
+    - Finger width/length ratio must be plausible (length ~3-6x width)
+    - PPI from finger must be within reasonable range for the image size
+    - Rejects landmarks that are likely misidentified (e.g., on fish body)
+
+    Returns dict with hand features, or None if no hands detected or all fail sanity.
+    """
+    mp_image = mp.Image.create_from_file(str(image_path))
+    result = hand_detector.detect(mp_image)
+
+    if not result.hand_landmarks:
+        return None
+
+    w, h = mp_image.width, mp_image.height
+    best = None
+    best_confidence = 0.0
+
+    for i, hand in enumerate(result.hand_landmarks):
+        # Key landmarks
+        idx_mcp = hand[5]   # Index finger knuckle
+        idx_pip = hand[6]   # Index finger first joint
+        idx_tip = hand[8]   # Index fingertip
+        mid_mcp = hand[9]   # Middle finger knuckle
+
+        # Finger width: distance between index and middle knuckles (pixels)
+        finger_width_px = np.sqrt(
+            ((idx_mcp.x - mid_mcp.x) * w) ** 2 +
+            ((idx_mcp.y - mid_mcp.y) * h) ** 2
+        )
+
+        # Index finger length: knuckle to tip (pixels)
+        finger_length_px = np.sqrt(
+            ((idx_mcp.x - idx_tip.x) * w) ** 2 +
+            ((idx_mcp.y - idx_tip.y) * h) ** 2
+        )
+
+        # Use confidence from handedness
+        conf = result.handedness[i][0].score if result.handedness[i] else 0.5
+
+        # ── Sanity filters ───────────────────────────────────────────
+        # Min pixel size: finger landmarks too small = likely bad detection
+        if finger_width_px < 10 or finger_length_px < 15:
+            continue
+
+        # Finger length should be ~3-6x finger width for a real hand.
+        # Outside 1.5-10x is likely a misdetection (landmarks on fish, etc.)
+        length_to_width = finger_length_px / max(finger_width_px, 1)
+        if length_to_width < 1.5 or length_to_width > 10.0:
+            continue
+
+        # PPI sanity: real-world finger width ~0.85" implies PPI.
+        # For a typical photo (2000-5000px wide), PPI should be ~20-200.
+        # Anything outside 10-500 is unreasonable.
+        ppi = finger_width_px / 0.85
+        if ppi < 10 or ppi > 500:
+            continue
+
+        # Implied fish length sanity: use PPI to estimate fish length.
+        # If the image diagonal is D pixels, max plausible fish length
+        # is D/ppi inches. If that's < 5" or > 80", PPI is wrong.
+        img_diag = np.sqrt(w ** 2 + h ** 2)
+        max_fish_inches = img_diag / ppi
+        if max_fish_inches < 5 or max_fish_inches > 80:
+            continue
+
+        if conf > best_confidence:
+            best_confidence = conf
+            best = {
+                "finger_width_px": finger_width_px,
+                "finger_length_px": finger_length_px,
+                "hand_confidence": conf,
+                "pixels_per_inch_from_finger": ppi,
+            }
+
+    return best
 
 
 def run_yolo(yolo_model, image_path):
@@ -154,8 +254,8 @@ def run_vit(vit_model, tfms, device, image_path):
     return int(idx.item()), float(conf.item())
 
 
-def compute_features(fish_box, person_box, species_idx, species_conf, orig_w, orig_h):
-    """Compute the 14-feature vector."""
+def compute_features(fish_box, person_box, species_idx, species_conf, orig_w, orig_h, hand_result=None):
+    """Compute feature vector from detection results."""
     if fish_box is None:
         return None
 
@@ -174,6 +274,8 @@ def compute_features(fish_box, person_box, species_idx, species_conf, orig_w, or
     # Person reference
     person_detected = 1.0 if person_box is not None else 0.0
     person_box_height = person_box["height"] if person_box else 0.0
+    person_box_width = person_box["width"] if person_box else 0.0
+    person_aspect_ratio = (person_box["width"] / max(person_box["height"], 1.0)) if person_box else 0.0
     fish_to_person_ratio = (max(fw, fh) / person_box["height"]) if person_box else 0.0
 
     # Species
@@ -186,6 +288,19 @@ def compute_features(fish_box, person_box, species_idx, species_conf, orig_w, or
     frame_diagonal = np.sqrt(IMG_SIZE ** 2 + IMG_SIZE ** 2)
     diagonal_fraction = diagonal / frame_diagonal
 
+    # Hand/finger reference (in original image pixel space)
+    hand_detected = 1.0 if hand_result is not None else 0.0
+    finger_width_px = hand_result["finger_width_px"] if hand_result else 0.0
+    finger_length_px = hand_result["finger_length_px"] if hand_result else 0.0
+    ppi_from_finger = hand_result["pixels_per_inch_from_finger"] if hand_result else 0.0
+
+    # Fish pixel length in original image space (for finger-based ratio)
+    fish_pixel_orig = max(fw / (IMG_SIZE / orig_w), fh / (IMG_SIZE / orig_h))
+    fish_to_finger_width = (fish_pixel_orig / finger_width_px) if finger_width_px > 0 else 0.0
+    fish_to_finger_length = (fish_pixel_orig / finger_length_px) if finger_length_px > 0 else 0.0
+    # Direct length estimate from finger PPI
+    fish_inches_from_finger = (fish_pixel_orig / ppi_from_finger) if ppi_from_finger > 0 else 0.0
+
     return {
         "fish_box_width": fish_box_width,
         "fish_box_height": fish_box_height,
@@ -196,11 +311,20 @@ def compute_features(fish_box, person_box, species_idx, species_conf, orig_w, or
         "fish_confidence": fish_confidence,
         "person_detected": person_detected,
         "person_box_height": person_box_height,
+        "person_box_width": person_box_width,
+        "person_aspect_ratio": person_aspect_ratio,
         "fish_to_person_ratio": fish_to_person_ratio,
         "species_index": species_index,
         "species_confidence": species_confidence_val,
         "image_aspect_ratio": image_aspect_ratio,
         "diagonal_fraction": diagonal_fraction,
+        "hand_detected": hand_detected,
+        "finger_width_px": finger_width_px,
+        "finger_length_px": finger_length_px,
+        "ppi_from_finger": ppi_from_finger,
+        "fish_to_finger_width": fish_to_finger_width,
+        "fish_to_finger_length": fish_to_finger_length,
+        "fish_inches_from_finger": fish_inches_from_finger,
     }
 
 
@@ -251,6 +375,7 @@ def main():
     # Load models
     yolo_model = load_yolo_model()
     vit_model, vit_tfms, vit_device = load_vit_model()
+    hand_detector = load_hand_detector()
 
     rows = []
     skipped = 0
@@ -282,8 +407,11 @@ def main():
         # Run ViT
         species_idx, species_conf = run_vit(vit_model, vit_tfms, vit_device, image_path)
 
+        # Run hand detection
+        hand_result = run_hand_detection(hand_detector, image_path)
+
         # Compute features
-        features = compute_features(fish_box, person_box, species_idx, species_conf, orig_w, orig_h)
+        features = compute_features(fish_box, person_box, species_idx, species_conf, orig_w, orig_h, hand_result)
 
         if features is None:
             print(f"  MISS {filename} — no fish detected")
@@ -298,15 +426,18 @@ def main():
         features["baseline_prediction"] = baseline
         features["species_name"] = SPECIES_CLASSES[species_idx]
         features["person_in_photo"] = "yes" if person_box else "no"
+        features["hand_in_photo"] = "yes" if hand_result else "no"
 
         rows.append(features)
 
         baseline_err = abs(baseline - length_inches) if baseline else None
         person_flag = "P" if person_box else " "
+        hand_flag = "H" if hand_result else " "
+        finger_est = f"finger={features['fish_inches_from_finger']:5.1f}\"" if hand_result else "finger=  N/A"
         print(
             f"  OK   {filename:<40} "
             f"actual={length_inches:5.1f}\"  baseline={baseline:5.1f}\"  "
-            f"err={baseline_err:+5.1f}\"  {person_flag}  {SPECIES_CLASSES[species_idx]}"
+            f"err={baseline_err:+5.1f}\"  {person_flag}{hand_flag}  {finger_est}  {SPECIES_CLASSES[species_idx]}"
         )
 
     # Save
@@ -320,10 +451,18 @@ def main():
     print(f"  Skipped: {skipped}")
     print(f"  With person: {sum(1 for r in rows if r['person_detected'] == 1.0)}")
     print(f"  Without person: {sum(1 for r in rows if r['person_detected'] == 0.0)}")
+    print(f"  With hand: {sum(1 for r in rows if r['hand_detected'] == 1.0)}")
+    print(f"  Without hand: {sum(1 for r in rows if r['hand_detected'] == 0.0)}")
 
     if rows:
         baseline_errors = [abs(r["baseline_prediction"] - r["length_inches"]) for r in rows]
         print(f"  Baseline MAE: {np.mean(baseline_errors):.2f}\"")
+
+        # Finger-based estimate MAE (only for photos with hands)
+        hand_rows = [r for r in rows if r["hand_detected"] == 1.0 and r["fish_inches_from_finger"] > 0]
+        if hand_rows:
+            finger_errors = [abs(r["fish_inches_from_finger"] - r["length_inches"]) for r in hand_rows]
+            print(f"  Finger-based MAE: {np.mean(finger_errors):.2f}\" (n={len(hand_rows)})")
 
     print(f"\n  Features saved to: {out_path}")
     print(f"{'='*70}")
