@@ -24,6 +24,8 @@ models/*.pkl
 data/ground_truth/images/
 data/ground_truth/labels.csv
 data/unlabeled/images/
+data/fish_species/
+data/fish_sex/
 
 # Output artifacts
 output/

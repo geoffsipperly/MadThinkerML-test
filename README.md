@@ -1,4 +1,4 @@
-# MadThinkerML — Fish Length Estimation
+# MadThinkerML — Fish ML Pipeline
 
 Replaces the fixed `pixelsPerInch` heuristic in the EpicWaters app with a learned regression model that estimates fish length from multi-source detection features.
 
@@ -72,22 +72,35 @@ This reduced hand detections from 55/84 (65%) to 25/84 (30%) but improved the fi
 ```
 MadThinkerML/
 ├── scripts/
-│   ├── extract_features.py        # Run YOLO + ViT + MediaPipe → feature CSV
-│   ├── train_length_regressor.py  # Train model, 5-fold CV, export
-│   ├── evaluate_length_model.py   # Comparison plots, promotion gate
-│   ├── experiment_features.py     # Feature engineering experiments
-│   └── extract_unlabeled.py       # Feature extraction for unlabeled photos
+│   ├── extract_features.py          # Run YOLO + ViT + MediaPipe → feature CSV
+│   ├── train_length_regressor.py    # Train length model, 5-fold CV, export
+│   ├── evaluate_length_model.py     # Comparison plots, promotion gate
+│   ├── experiment_features.py       # Feature engineering experiments
+│   ├── extract_unlabeled.py         # Feature extraction for unlabeled photos
+│   ├── train_vit_species.py         # Train ViT species classifier (9 classes)
+│   ├── train_vit_sex.py             # Train ViT sex classifier (male/female)
+│   ├── export_vit_species_coreml.py # Export species model to CoreML
+│   └── export_vit_sex_coreml.py     # Export sex model to CoreML
 ├── models/
-│   ├── hand_landmarker.task       # MediaPipe hand landmark model
-│   ├── length_regressor.pkl       # Trained regressor (gitignored)
-│   └── LengthRegressor.mlpackage  # CoreML export (gitignored)
+│   ├── hand_landmarker.task         # MediaPipe hand landmark model
+│   ├── yolo_fish_detector.pt        # YOLOv8 fish/person detector (gitignored)
+│   ├── vit_fish_species.pt          # ViT species classifier weights (gitignored)
+│   ├── vit_fish_sex.pt              # ViT sex classifier weights (gitignored)
+│   ├── length_regressor.pkl         # Trained length regressor (gitignored)
+│   └── LengthRegressor.mlmodel     # CoreML length export (gitignored)
 ├── data/
 │   ├── ground_truth/
-│   │   ├── images/                # Labeled fish photos
-│   │   └── labels.csv             # filename, length_inches, species
-│   └── unlabeled/
-│       └── images/                # Unlabeled fish photos for distribution analysis
-├── output/                        # Features CSV, predictions, plots, metrics
+│   │   ├── images/                  # Labeled fish photos (length regression)
+│   │   └── labels.csv               # filename, length_inches, species
+│   ├── unlabeled/
+│   │   └── images/                  # Unlabeled fish photos
+│   ├── fish_species/                # Species classifier training data
+│   │   ├── train/                   # ImageFolder: 9 species subdirectories
+│   │   └── val/
+│   └── fish_sex/                    # Sex classifier training data
+│       ├── train/                   # ImageFolder: female/, male/
+│       └── val/
+├── output/                          # Features CSV, predictions, plots, metrics
 └── requirements.txt
 ```
 
@@ -98,10 +111,18 @@ MadThinkerML/
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-# Run pipeline
+# Length regression pipeline
 python scripts/extract_features.py          # Extract features from labeled photos
 python scripts/train_length_regressor.py    # Train and evaluate model
 python scripts/evaluate_length_model.py     # Generate comparison plots
+
+# Species classifier
+python scripts/train_vit_species.py         # Train ViT species classifier
+python scripts/export_vit_species_coreml.py # Export to CoreML for iOS
+
+# Sex classifier
+python scripts/train_vit_sex.py             # Train ViT sex classifier
+python scripts/export_vit_sex_coreml.py     # Export to CoreML for iOS
 
 # Optional
 python scripts/experiment_features.py       # Run feature engineering experiments
@@ -115,11 +136,11 @@ Place labeled photos in `data/ground_truth/`:
 - `labels.csv` — CSV with columns: `Image Filename`, `Final Length`, `Final Species`
   (or simple format: `filename`, `length_inches`, `species`)
 
-Models from EpicWatersML are referenced at `~/dev/EpicWatersML/`:
-- YOLO: `runs/fish_det/steelhead_fish_v3/weights/best.pt`
-- ViT: `vit_fish_species_tiny_best.pt`
-
-MediaPipe hand landmarker is included at `models/hand_landmarker.task`.
+All models are self-contained in `models/` (gitignored except `hand_landmarker.task`):
+- `yolo_fish_detector.pt` — YOLOv8 fish/person detector
+- `vit_fish_species.pt` — ViT species classifier
+- `vit_fish_sex.pt` — ViT sex classifier
+- `hand_landmarker.task` — MediaPipe hand landmarks (tracked in git)
 
 ## Known Limitations
 

@@ -30,14 +30,13 @@ from ultralytics import YOLO
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-EPICWATERS_ML = Path.home() / "dev" / "EpicWatersML"
 
 IMAGES_DIR = PROJECT_ROOT / "data" / "ground_truth" / "images"
 LABELS_CSV = PROJECT_ROOT / "data" / "ground_truth" / "labels.csv"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
-YOLO_MODEL_PATH = EPICWATERS_ML / "runs" / "fish_det" / "steelhead_fish_v3" / "weights" / "best.pt"
-VIT_MODEL_PATH = EPICWATERS_ML / "vit_fish_species_tiny_best.pt"
+YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolo_fish_detector.pt"
+VIT_MODEL_PATH = PROJECT_ROOT / "models" / "vit_fish_species.pt"
 HAND_MODEL_PATH = PROJECT_ROOT / "models" / "hand_landmarker.task"
 
 # ── Constants (matching Swift CatchPhotoAnalyzer) ────────────────────────────

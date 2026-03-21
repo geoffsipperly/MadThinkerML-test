@@ -22,13 +22,12 @@ from ultralytics import YOLO
 
 # Reuse constants and functions from extract_features
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-EPICWATERS_ML = Path.home() / "dev" / "EpicWatersML"
 
 UNLABELED_DIR = PROJECT_ROOT / "data" / "unlabeled" / "images"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
-YOLO_MODEL_PATH = EPICWATERS_ML / "runs" / "fish_det" / "steelhead_fish_v3" / "weights" / "best.pt"
-VIT_MODEL_PATH = EPICWATERS_ML / "vit_fish_species_tiny_best.pt"
+YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolo_fish_detector.pt"
+VIT_MODEL_PATH = PROJECT_ROOT / "models" / "vit_fish_species.pt"
 
 IMG_SIZE = 640.0
 FISH_CLASS = 0
