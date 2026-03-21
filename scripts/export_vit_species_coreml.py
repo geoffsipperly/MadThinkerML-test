@@ -58,18 +58,23 @@ def export_coreml(
     model = load_trained_model(weights_path)
 
     example_input = torch.randn(1, 3, IMG_SIZE, IMG_SIZE)
-    print("Tracing model...")
-    traced = torch.jit.trace(model, example_input)
-    traced.eval()
+
+    # Use torch.export (required for timm ViT + coremltools 9)
+    print("Exporting with torch.export...")
+    exported = torch.export.export(model, (example_input,))
+    exported = exported.run_decompositions({})
 
     print("Converting to CoreML...")
     mlmodel = ct.convert(
-        traced,
+        exported,
         inputs=[
             ct.TensorType(
                 name="image",
                 shape=example_input.shape,
             )
+        ],
+        outputs=[
+            ct.TensorType(name="logits"),
         ],
         minimum_deployment_target=ct.target.iOS16,
     )
