@@ -166,10 +166,11 @@ def run_hand_detection(hand_detector, image_path):
 
         # Implied fish length sanity: use PPI to estimate fish length.
         # If the image diagonal is D pixels, max plausible fish length
-        # is D/ppi inches. If that's < 5" or > 80", PPI is wrong.
+        # is D/ppi inches. Relaxed from 80" to 300" — fish often fills
+        # only a small fraction of the frame, so old limit rejected valid hands.
         img_diag = np.sqrt(w ** 2 + h ** 2)
         max_fish_inches = img_diag / ppi
-        if max_fish_inches < 5 or max_fish_inches > 80:
+        if max_fish_inches < 5 or max_fish_inches > 300:
             continue
 
         if conf > best_confidence:

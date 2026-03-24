@@ -239,9 +239,37 @@ def export_model(model, metrics):
         pickle.dump({"model": model, "feature_cols": FEATURE_COLS}, f)
     print(f"  Pickle saved: {pkl_path}")
 
-    # CoreML export
+    # ONNX export (sklearn → ONNX)
+    onnx_path = MODELS_DIR / "length_regressor.onnx"
+    try:
+        from skl2onnx import convert_sklearn
+        from skl2onnx.common.data_types import FloatTensorType
+
+        initial_type = [("features", FloatTensorType([None, len(FEATURE_COLS)]))]
+        onnx_model = convert_sklearn(model, initial_types=initial_type)
+        with open(onnx_path, "wb") as f:
+            f.write(onnx_model.SerializeToString())
+        print(f"  ONNX saved: {onnx_path}")
+    except ImportError:
+        print("  ONNX export skipped (skl2onnx not installed)")
+    except Exception as e:
+        print(f"  ONNX export failed: {e}")
+
+    # CoreML export (ONNX → CoreML, or direct sklearn → CoreML)
     try:
         import coremltools as ct
+
+        coreml_model = None
+
+        # Patch coremltools bug: GradientBoostingRegressor base_prediction
+        # comes back as array instead of scalar in newer sklearn versions
+        import coremltools.models.tree_ensemble as _te
+        _orig_set = _te.TreeEnsembleBase.set_default_prediction_value
+        def _patched_set(self, values):
+            if hasattr(values, '__len__') and len(np.array(values).shape) > 0:
+                values = float(np.array(values).flat[0])
+            return _orig_set(self, values)
+        _te.TreeEnsembleBase.set_default_prediction_value = _patched_set
 
         if USE_XGBOOST:
             coreml_model = ct.converters.xgboost.convert(
@@ -251,12 +279,16 @@ def export_model(model, metrics):
             coreml_model = ct.converters.sklearn.convert(
                 model, input_features=FEATURE_COLS, output_feature_names="length_inches",
             )
-        coreml_model.author = "MadThinkerML"
-        coreml_model.short_description = "Fish length estimator from YOLO/ViT features"
 
-        mlpackage_path = MODELS_DIR / "LengthRegressor.mlpackage"
-        coreml_model.save(str(mlpackage_path))
-        print(f"  CoreML saved: {mlpackage_path}")
+        if coreml_model is not None:
+            coreml_model.author = "MadThinkerML"
+            coreml_model.short_description = "Fish length estimator from YOLO/ViT features"
+
+            mlmodel_path = MODELS_DIR / "LengthRegressor.mlmodel"
+            coreml_model.save(str(mlmodel_path))
+            print(f"  CoreML saved: {mlmodel_path}")
+        else:
+            print("  CoreML export failed: no conversion path available")
     except ImportError:
         print("  CoreML export skipped (coremltools not installed)")
     except Exception as e:
